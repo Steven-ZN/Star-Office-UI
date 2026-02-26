@@ -31,11 +31,87 @@
             max-width: 90%;
             text-align: center;
         }
+        .side-panel {
+            position: fixed;
+            right: 12px;
+            width: 360px;
+            max-width: 45vw;
+            background: rgba(0,0,0,0.75);
+            color: #ddd;
+            font-size: 11px;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #333;
+            white-space: pre-wrap;
+            overflow-y: auto;
+            max-height: 40vh;
+        }
+        #gateway-log { top: 12px; }
+        #tui-log { top: 55vh; }
+        .panel-title { color: #ffd700; font-weight: bold; margin-bottom: 6px; }
+
+        #control-bar {
+            position: fixed;
+            left: 12px;
+            top: 12px;
+            display: grid;
+            grid-template-columns: repeat(2, 120px);
+            gap: 6px;
+            background: rgba(0,0,0,0.6);
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #333;
+        }
+        #control-bar button {
+            background: #2c2f3a;
+            color: #fff;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 6px 8px;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        #control-bar button:hover { background: #3a3f4f; }
+
+        #scene-card {
+            position: fixed;
+            left: 50%;
+            top: 12px;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.65);
+            border: 1px solid #333;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #scene-icon { font-size: 18px; }
     </style>
 </head>
 <body>
     <div id="game-container"></div>
     <div id="status-text">加载中...</div>
+    <div id="scene-card"><div id="scene-icon">🦞</div><div id="scene-text">待命</div></div>
+    <div id="gateway-log" class="side-panel"><div class="panel-title">Gateway Logs</div><div id="gateway-content">加载中...</div></div>
+    <div id="tui-log" class="side-panel"><div class="panel-title">TUI Status</div><div id="tui-content">加载中...</div></div>
+
+    <div id="control-bar">
+        <button onclick="setState('idle','待命')">待命</button>
+        <button onclick="setState('writing','写作中')">写作</button>
+        <button onclick="setState('researching','检索中')">检索</button>
+        <button onclick="setState('executing','执行中')">执行</button>
+        <button onclick="setState('syncing','同步中')">同步</button>
+        <button onclick="setState('error','报警中')">报警</button>
+        <button onclick="clearDetail()">清空详情</button>
+        <button onclick="refreshPanels()">刷新面板</button>
+        <button onclick="togglePanels()">切换面板</button>
+        <button onclick="bubbleNow()">气泡提示</button>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
     <script>
@@ -53,9 +129,9 @@
             idle: { name: '待命', area: 'breakroom' },
             writing: { name: '整理文档', area: 'workdesk' },
             researching: { name: '搜索信息', area: 'workdesk' },
-            executing: { name: '执行任务', area: 'workdesk' },
+            executing: { name: '执行任务', area: 'executing' },
             syncing: { name: '同步备份', area: 'breakroom' },
-            error: { name: '出错了', area: 'breakroom' }
+            error: { name: '出错了', area: 'alert' }
         };
 
         const BUBBLE_TEXTS = {
@@ -67,50 +143,53 @@
             error: ['啊哦…', '出问题了', '让我看看', '马上修好']
         };
 
-        let game, star, areas = {}, currentState = 'idle', statusText, lastFetch = 0, lastBlink = 0, lastBubble = 0, targetX = 660, targetY = 170, bubble = null, typewriterText = '', typewriterTarget = '', typewriterIndex = 0, lastTypewriter = 0;
+        const SCENES = [
+            { key: 'email', icon: '✉️', text: '写邮件' },
+            { key: 'code', icon: '💻', text: '写代码' },
+            { key: 'bug', icon: '🪲', text: '修 Bug' },
+            { key: 'paper', icon: '📄', text: '写论文' },
+            { key: 'search', icon: '🔎', text: '搜索信息' },
+            { key: 'ticket', icon: '🎫', text: '订车票' },
+            { key: 'calendar', icon: '📅', text: '排日程' },
+            { key: 'meeting', icon: '🎧', text: '会议中' },
+            { key: 'deploy', icon: '🚀', text: '部署/发布' },
+            { key: 'backup', icon: '🧠', text: '备份/同步' },
+        ];
+
+        let game, star, areas = {}, currentState = 'idle', statusText, lastFetch = 0, lastBlink = 0, lastBubble = 0, targetX = 660, targetY = 170, bubble = null, typewriterText = '', typewriterTarget = '', typewriterIndex = 0, lastTypewriter = 0, lastPanel = 0, lastIdleSwitch = 0, lastTextureSwitch = 0, lastIdleFlip = 0;
         const FETCH_INTERVAL = 2000;
         const BLINK_INTERVAL = 2500;
         const BUBBLE_INTERVAL = 8000;
         const TYPEWRITER_DELAY = 50;
+        const PANEL_INTERVAL = 3000;
 
         function preload() {
             this.load.image('office_bg', '/static/office_bg.png');
+            this.load.image('star_idle', '/static/star_idle.png');
+            this.load.image('star_writing', '/static/star_writing.png');
+            this.load.image('star_researching', '/static/star_researching.png');
+            this.load.image('star_executing', '/static/star_executing.png');
+            this.load.image('star_syncing', '/static/star_syncing.png');
+            this.load.image('star_error', '/static/star_error.png');
         }
 
         function create() {
             game = this;
             this.add.image(400, 300, 'office_bg');
             areas = {
-                workdesk: { x: 260, y: 340 },
-                breakroom: { x: 660, y: 170 },
-                alert: { x: 620, y: 490 }
+                breakroom: { x: 200, y: 150 },
+                workdesk: { x: 600, y: 150 },
+                alert: { x: 100, y: 450 },
+                executing: { x: 500, y: 450 }
             };
 
-            // 创建 Star 角色（睁眼 + 闭眼两个纹理）
-            const graphicsOpen = game.make.graphics();
-            graphicsOpen.fillStyle(0xff6b35, 1);
-            graphicsOpen.fillRect(10, 10, 12, 12);
-            graphicsOpen.fillStyle(0xffffff, 1);
-            graphicsOpen.fillRect(13, 13, 3, 3);
-            graphicsOpen.fillRect(16, 13, 3, 3);
-            graphicsOpen.fillStyle(0x000000, 1);
-            graphicsOpen.fillRect(14, 14, 1, 1);
-            graphicsOpen.fillRect(17, 14, 1, 1);
-            graphicsOpen.generateTexture('star_open', 24, 24);
-
-            const graphicsClosed = game.make.graphics();
-            graphicsClosed.fillStyle(0xff6b35, 1);
-            graphicsClosed.fillRect(10, 10, 12, 12);
-            graphicsClosed.fillStyle(0x000000, 1);
-            graphicsClosed.fillRect(13, 14, 3, 1);
-            graphicsClosed.fillRect(16, 14, 3, 1);
-            graphicsClosed.generateTexture('star_closed', 24, 24);
-
-            star = game.physics.add.sprite(660, 170, 'star_open');
+            // 角色图（根据状态切换贴图）
+            star = game.physics.add.sprite(600, 150, 'star_idle');
             star.setOrigin(0.5);
-            star.setScale(1.8);
-            star.setAlpha(0.95);
+            star.setScale(0.38);
+            star.setAlpha(0.98);
 
+            
             // 加像素风小牌匾：海辛小龙虾的办公室
             const plaqueBg = game.add.rectangle(400, 570, 380, 40, 0x5d4037);
             plaqueBg.setStrokeStyle(3, 0x3e2723);
@@ -131,12 +210,13 @@
 
         function update(time) {
             if (time - lastFetch > FETCH_INTERVAL) { fetchStatus(); lastFetch = time; }
+            if (time - lastPanel > PANEL_INTERVAL) { fetchPanels(); lastPanel = time; }
 
-            // 眨眼
+            // 眨眼（外部贴图不支持闭眼动画，保留轻微闪烁）
             if (time - lastBlink > BLINK_INTERVAL) {
-                star.setTexture('star_closed');
+                star.setAlpha(0.85);
                 lastBlink = time;
-                setTimeout(() => { star.setTexture('star_open'); }, 150);
+                setTimeout(() => { star.setAlpha(0.98); }, 120);
             }
 
             // 冒气泡
@@ -155,6 +235,7 @@
 
             // 移动 + 小踱步
             moveStar(time);
+
         }
 
         function normalizeState(s) {
@@ -175,6 +256,50 @@
                     const changed = nextState !== currentState;
                     currentState = nextState;
                     const nextLine = '[' + stateInfo.name + '] ' + (data.detail || '...');
+
+                    // 场景卡片（根据 detail/状态推断）
+                    const detail = (data.detail || '').toLowerCase();
+                    let scene = null;
+                    if (detail.includes('邮件') || detail.includes('email')) scene = SCENES[0];
+                    else if (detail.includes('代码') || detail.includes('code')) scene = SCENES[1];
+                    else if (detail.includes('bug')) scene = SCENES[2];
+                    else if (detail.includes('论文') || detail.includes('paper')) scene = SCENES[3];
+                    else if (detail.includes('搜索') || detail.includes('检索') || detail.includes('search')) scene = SCENES[4];
+                    else if (detail.includes('车票') || detail.includes('机票') || detail.includes('ticket')) scene = SCENES[5];
+                    else if (detail.includes('日程') || detail.includes('calendar')) scene = SCENES[6];
+                    else if (detail.includes('会议') || detail.includes('meeting')) scene = SCENES[7];
+                    else if (detail.includes('部署') || detail.includes('发布') || detail.includes('deploy')) scene = SCENES[8];
+                    else if (detail.includes('同步') || detail.includes('备份') || detail.includes('backup')) scene = SCENES[9];
+                    else {
+                        const byState = {
+                            idle: { icon: '☕', text: '待命' },
+                            writing: { icon: '📝', text: '整理文档' },
+                            researching: { icon: '🔎', text: '搜索信息' },
+                            executing: { icon: '⚡', text: '执行任务' },
+                            syncing: { icon: '🧠', text: '备份/同步' },
+                            error: { icon: '🚨', text: '紧急处理' }
+                        };
+                        scene = byState[nextState] || { icon: '🦞', text: '待命' };
+                    }
+                    document.getElementById('scene-icon').textContent = scene.icon;
+                    document.getElementById('scene-text').textContent = scene.text;
+
+
+                    // 切换角色贴图
+                    const texMap = {
+                        idle: 'star_idle',
+                        writing: 'star_writing',
+                        researching: 'star_researching',
+                        executing: 'star_executing',
+                        syncing: 'star_syncing',
+                        error: 'star_error'
+                    };
+                    const now = Date.now();
+                    if (texMap[nextState] && (now - lastTextureSwitch > 500)) {
+                        star.setTexture(texMap[nextState]);
+                        lastTextureSwitch = now;
+                    }
+
                     if (changed) {
                         typewriterTarget = nextLine;
                         typewriterText = '';
@@ -197,21 +322,129 @@
                 });
         }
 
+        function fetchPanels() {
+            fetch('/gateway_logs')
+                .then(r => r.json())
+                .then(d => { document.getElementById('gateway-content').textContent = d.text || ''; })
+                .catch(() => { document.getElementById('gateway-content').textContent = 'log fetch failed'; });
+            fetch('/tui')
+                .then(r => r.json())
+                .then(d => { document.getElementById('tui-content').textContent = d.text || ''; })
+                .catch(() => { document.getElementById('tui-content').textContent = 'tui fetch failed'; });
+        }
+
+        function setState(state, detail) {
+            fetch('/set_state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ state, detail })
+            }).then(() => fetchStatus());
+        }
+
+        function clearDetail() {
+            fetch('/set_state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ detail: '' })
+            }).then(() => fetchStatus());
+        }
+
+        function refreshPanels() {
+            fetchPanels();
+        }
+
+        function togglePanels() {
+            const g = document.getElementById('gateway-log');
+            const t = document.getElementById('tui-log');
+            const hidden = g.style.display === 'none';
+            g.style.display = hidden ? 'block' : 'none';
+            t.style.display = hidden ? 'block' : 'none';
+        }
+
+        function bubbleNow() {
+            showBubble();
+        }
+
         function moveStar(time) {
             const stateInfo = STATES[currentState] || STATES.idle;
             const baseTarget = areas[stateInfo.area] || areas.breakroom;
-            if (Math.random() < 0.005) {
+            if (Math.random() < 0.006) {
                 targetX = baseTarget.x + (Math.random() - 0.5) * 40;
                 targetY = baseTarget.y + (Math.random() - 0.5) * 40;
             }
             const dx = targetX - star.x;
             const dy = targetY - star.y;
-            const speed = 1.2;
+            const dist = Math.hypot(dx, dy);
             const wobble = Math.sin(time / 200) * 0.8;
-            if (Math.abs(dx) > 3) star.x += Math.sign(dx) * speed;
-            if (Math.abs(dy) > 3) star.y += Math.sign(dy) * speed;
-            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+            // 速度按状态
+            let speed = 1.2;
+            if (currentState === 'idle') speed = 0.6;
+            if (currentState === 'executing') speed = 1.6;
+            if (currentState === 'error') speed = 2.2;
+
+            const moving = dist > 3;
+            if (moving) {
+                star.x += Math.sign(dx) * speed;
+                star.y += Math.sign(dy) * speed;
+            }
+
+            // 是否仍在区域中心附近
+            const inArea = dist < 25;
+
+            if (moving && !inArea) {
+                // 房间间移动：用 walking
+                if (currentState !== 'error') {
+                    const now = Date.now();
+                    if (now - lastTextureSwitch > 500) {
+                        star.setTexture('star_researching');
+                        lastTextureSwitch = now;
+                    }
+                }
+            } else {
+                // 区域内：按状态贴图
+                const texMap = {
+                    idle: 'star_idle',
+                    writing: 'star_writing',
+                    researching: 'star_researching',
+                    executing: 'star_executing',
+                    syncing: 'star_syncing',
+                    error: 'star_error'
+                };
+                const now = Date.now();
+                if (texMap[currentState] && (now - lastTextureSwitch > 500)) {
+                    star.setTexture(texMap[currentState]);
+                    lastTextureSwitch = now;
+                }
+            }
+
+            // idle 偶尔切回 resting 动作
+            if (currentState === 'idle' && time - lastIdleSwitch > 5000) {
+                if (Math.random() < 0.4) star.setTexture('star_idle');
+                lastIdleSwitch = time;
+            }
+
+            if (moving) {
+                // 始终朝移动方向镜像（节流 0.5s）
+                const now = Date.now();
+                if (now - lastTextureSwitch > 500) {
+                    star.setFlipX(dx < 0);
+                }
                 star.setY(star.y + wobble);
+            } else {
+                const now = Date.now();
+                if (currentState === 'idle') {
+                    // idle 每3秒镜像一次
+                    if (now - lastIdleFlip > 3000) {
+                        star.setFlipX(!star.flipX);
+                        lastIdleFlip = now;
+                    }
+                } else {
+                    // 区域内执行任务：每2秒镜像一次
+                    if (now - lastIdleFlip > 2000) {
+                        star.setFlipX(!star.flipX);
+                        lastIdleFlip = now;
+                    }
+                }
             }
         }
 
