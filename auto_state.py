@@ -3,7 +3,7 @@ import os, time, json
 from datetime import datetime
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
-SESSIONS_DIR = os.path.expanduser("/home/steven/.openclaw/agents/main/sessions")
+SESSIONS_DIR = os.path.expanduser("~/.openclaw/agents/main/sessions")
 CHECK_INTERVAL = 5  # seconds
 ACTIVE_WINDOW = 20  # seconds
 

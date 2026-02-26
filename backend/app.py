@@ -8,7 +8,7 @@ import os
 import subprocess
 
 # Paths
-ROOT_DIR = "/home/steven/clawd/Star-Office-UI"
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(ROOT_DIR, "frontend")
 STATE_FILE = os.path.join(ROOT_DIR, "state.json")
 
