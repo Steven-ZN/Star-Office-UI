@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Star Office UI - Backend State Service"""
 
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, send_from_directory, request
 from datetime import datetime
 import json
 import os
+import subprocess
 
 # Paths
-ROOT_DIR = "/root/.openclaw/workspace/star-office-ui"
+ROOT_DIR = "/home/steven/clawd/Star-Office-UI"
 FRONTEND_DIR = os.path.join(ROOT_DIR, "frontend")
 STATE_FILE = os.path.join(ROOT_DIR, "state.json")
 
@@ -79,6 +80,15 @@ def save_state(state: dict):
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
+def run_cmd(cmd):
+    try:
+        res = subprocess.run(cmd, shell=True, check=False, capture_output=True, text=True, timeout=6)
+        out = (res.stdout or "") + ("\n" + res.stderr if res.stderr else "")
+        return out.strip()
+    except Exception as e:
+        return f"[error] {e}"
+
+
 # Initialize state
 if not os.path.exists(STATE_FILE):
     save_state(DEFAULT_STATE)
@@ -101,6 +111,35 @@ def get_status():
 def health():
     """Health check"""
     return jsonify({"status": "ok", "timestamp": datetime.now().isoformat()})
+
+
+@app.route("/set_state", methods=["POST"])
+def set_state():
+    data = request.get_json(silent=True) or {}
+    state = load_state()
+    if "state" in data:
+        state["state"] = data["state"]
+    if "detail" in data:
+        state["detail"] = data["detail"]
+    if "progress" in data:
+        state["progress"] = data["progress"]
+    state["updated_at"] = datetime.now().isoformat()
+    save_state(state)
+    return jsonify({"ok": True, "state": state})
+
+
+@app.route("/gateway_logs", methods=["GET"])
+def gateway_logs():
+    """Fetch gateway logs"""
+    text = run_cmd("openclaw logs --limit 120 --plain --no-color --timeout 8000")
+    return jsonify({"text": text})
+
+
+@app.route("/tui", methods=["GET"])
+def tui():
+    """Fetch TUI/status output"""
+    text = run_cmd("openclaw status --deep")
+    return jsonify({"text": text})
 
 
 if __name__ == "__main__":
